@@ -51,8 +51,7 @@ class EncoderOdom:
         d_time = (current_time - self.last_enc_time).to_sec()
         self.last_enc_time = current_time
 
-        # TODO find better what to determine going straight, this means slight deviation is accounted
-        if left_ticks == right_ticks:
+        if abs(left_ticks / right_ticks - 1) < 0.05:
             d_theta = 0.0
             self.cur_x += dist * cos(self.cur_theta)
             self.cur_y += dist * sin(self.cur_theta)
