@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
 from math import pi, cos, sin
-
 import diagnostic_msgs
 import diagnostic_updater
 from roboclaw_driver.roboclaw_driver import Roboclaw

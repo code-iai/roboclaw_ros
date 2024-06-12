@@ -2,18 +2,19 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>roboclaw_node</name>
-  <version>0.0.0</version>
+  <version>0.0.1</version>
   <description>ROS 2 Roboclaw Node package</description>
-  <maintainer email="bwbazemore@uga.edu">Brad Bazemore</maintainer>
+  <maintainer email="aniedz@cs.uni-bremen.de">Arthur Niedzwiecki</maintainer>
   <license>BSD</license>
 
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>rclpy</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>diagnostic_updater</exec_depend>
-  <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-transforms3d</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
