@@ -78,7 +78,6 @@ class OdomEncoder:
         """
         Calculate current linear and angular velocity from encoder ticks.
         """
-        self.node.get_logger().info("enc_left: %d, enc_right: %d" % (enc_left, enc_right))
         left_ticks = enc_left - self.last_enc_left
         right_ticks = enc_right - self.last_enc_right
         self.last_enc_left = enc_left
@@ -196,28 +195,44 @@ class Roboclaw_node(Node):
                        0x4000: (diagnostic_msgs.msg.DiagnosticStatus.OK, "M1 home"),
                        0x8000: (diagnostic_msgs.msg.DiagnosticStatus.OK, "M2 home")}
 
-        dev_name = self.declare_parameter("~dev", "/dev/ttyACM0").value
-        baud_rate = int(self.declare_parameter("~baud", "38400").value)
+        self.declare_parameter("dev", "/dev/ttyACM0")
+        self.declare_parameter("baud", 38400)
+        self.declare_parameter("address", 128)
+        self.declare_parameter("max_speed", 1.0)
+        self.declare_parameter("ticks_per_meter", 2495.0)
+        self.declare_parameter("base_width", 0.421)
+        self.declare_parameter("invert_motor_direction", False)
+        self.declare_parameter("flip_left_and_right_motors", False)
 
-        # Set address
-        self.address = int(self.declare_parameter("~address", "128").value)
-        if self.address > 0x87 or self.address < 0x80:
+        # Set default values
+        self.get_logger().info("Roboclaw: set default values.")
+
+        dev_name = str(self.get_parameter("dev").value)
+        baud_rate = int(self.get_parameter("baud").value)
+        self.ADDRESS = int(self.get_parameter("address").value)
+        self.MAX_SPEED = float(self.get_parameter("max_speed").value)
+        self.TICKS_PER_METER = float(self.get_parameter("ticks_per_meter").value)
+        self.BASE_WIDTH = float(self.get_parameter("base_width").value)
+        self.INVERT_MOTOR_DIRECTION = self.get_parameter("invert_motor_direction").value
+        self.FLIP_LEFT_AND_RIGHT_MOTORS = self.get_parameter("flip_left_and_right_motors").value
+
+        if self.ADDRESS > 0x87 or self.ADDRESS < 0x80:
             self.get_logger().logfatal("Address out of range")
             rclpy.shutdown()
-        self.roboclaw = Roboclaw(dev_name, baud_rate)
 
         # Connect to Roboclaw
+        self.roboclaw = Roboclaw(dev_name, baud_rate)
         self.get_logger().info('Connecting to roboclaw')
         if self.roboclaw.Open() == 1:
             self.get_logger().info('Roboclaw: Connection established')
         else:
-            self.get_logger().error("Roboclaw: Couldn't open port. Is 'ls /dev/ | grep ttyACM0' available?")
+            self.get_logger().error("Roboclaw: Couldn't open port. Is 'ls /dev/ | grep %s' available?" % dev_name)
             self.get_logger().info("Shutting down.")
             rclpy.shutdown()
 
         # Check version
         self.get_logger().info("Roboclaw: fetching version")
-        (status, version) = self.roboclaw.ReadVersion(self.address)
+        (status, version) = self.roboclaw.ReadVersion(self.ADDRESS)
         if status == 1:
             self.get_logger().info("Roboclaw: version is %s" % version)
         else:
@@ -227,22 +242,13 @@ class Roboclaw_node(Node):
         # Set up diagnostics
         self.updater = diagnostic_updater.Updater(self)
         self.updater.setHardwareID("Roboclaw")
-        self.updater.add(diagnostic_updater.
-                         FunctionDiagnosticTask("Vitals", self.check_vitals))
+        self.updater.add(diagnostic_updater.FunctionDiagnosticTask("Vitals", self.check_vitals))
         self.updater.update()
 
         # Reset motors
         self.get_logger().info("Roboclaw: stop motors.")
-        self.roboclaw.SpeedM1M2(self.address, 0, 0)
-        self.roboclaw.ResetEncoders(self.address)
-
-        # Set default values
-        self.get_logger().info("Roboclaw: set default values.")
-        self.MAX_SPEED = float(self.declare_parameter("~max_speed", "1.0").value)
-        self.TICKS_PER_METER = float(self.declare_parameter("~ticks_per_meter", "2495").value)
-        self.BASE_WIDTH = float(self.declare_parameter("~base_width", "0.421").value)
-        self.INVERT_MOTOR_DIRECTION = self.declare_parameter("~invert_motor_direction", False).value
-        self.FLIP_LEFT_AND_RIGHT_MOTORS = self.declare_parameter("~flip_left_and_right_motors", False).value
+        self.roboclaw.SpeedM1M2(self.ADDRESS, 0, 0)
+        self.roboclaw.ResetEncoders(self.ADDRESS)
 
         # Set clock
         self.manual_spin_rate = 10 # hz
@@ -257,12 +263,12 @@ class Roboclaw_node(Node):
         # Publish defaults
         self.get_logger().info("dev %s" % dev_name)
         self.get_logger().info("baud %d" % baud_rate)
-        self.get_logger().info("address %d" % self.address)
+        self.get_logger().info("address %d" % self.ADDRESS)
         self.get_logger().info("max_speed %f" % self.MAX_SPEED)
         self.get_logger().info("ticks_per_meter %f" % self.TICKS_PER_METER)
         self.get_logger().info("base_width %f" % self.BASE_WIDTH)
-        self.get_logger().info("invert_motor_direction %f" % self.INVERT_MOTOR_DIRECTION)
-        self.get_logger().info("flip_left_and_right_motors %f" % self.FLIP_LEFT_AND_RIGHT_MOTORS)
+        self.get_logger().info("invert_motor_direction %s" % self.INVERT_MOTOR_DIRECTION)
+        self.get_logger().info("flip_left_and_right_motors %s" % self.FLIP_LEFT_AND_RIGHT_MOTORS)
 
     def run(self):
         """
@@ -275,11 +281,9 @@ class Roboclaw_node(Node):
 
             # stop motors if no command received for 1 second
             if (self.get_clock().now() - self.last_set_speed_time) > Duration(seconds=1.0):
-                self.get_logger().info("Did not get command for 1 second, stopping")
-                self.get_logger().info(str(self.get_clock().now() - self.last_set_speed_time))
                 try:
-                    self.roboclaw.ForwardM1(self.address, 0)
-                    self.roboclaw.ForwardM2(self.address, 0)
+                    self.roboclaw.ForwardM1(self.ADDRESS, 0)
+                    self.roboclaw.ForwardM2(self.ADDRESS, 0)
                 except OSError as e:
                     self.get_logger().error("Could not stop")
                     self.get_logger().info(e)
@@ -290,7 +294,7 @@ class Roboclaw_node(Node):
 
             # read left encoders
             try:
-                status_left, enc_left, crc_left = self.roboclaw.ReadEncM1(self.address)
+                status_left, enc_left, crc_left = self.roboclaw.ReadEncM1(self.ADDRESS)
             except ValueError:
                 pass
             except OSError as e:
@@ -299,7 +303,7 @@ class Roboclaw_node(Node):
 
             # read right encoders
             try:
-                status_right, enc_right, crc_right = self.roboclaw.ReadEncM2(self.address)
+                status_right, enc_right, crc_right = self.roboclaw.ReadEncM2(self.ADDRESS)
             except ValueError:
                 pass
             except OSError as e:
@@ -307,12 +311,12 @@ class Roboclaw_node(Node):
                 self.get_logger().info(e)
 
             # invert encoders if necessary
-            if self.INVERT_MOTOR_DIRECTION:
+            if self.INVERT_MOTOR_DIRECTION == 1:
                 enc_left = -enc_left
                 enc_right = -enc_right
 
             # flip direction if necessary
-            if self.FLIP_LEFT_AND_RIGHT_MOTORS:
+            if self.FLIP_LEFT_AND_RIGHT_MOTORS == 1:
                 enc_left, enc_right = enc_right, enc_left
 
             # send encoder data to odometry calculation
@@ -320,7 +324,7 @@ class Roboclaw_node(Node):
                 self.odom_encoder.update_publish(enc_left, enc_right)  # update_publish expects enc_left enc_right
                 self.updater.update()
             except Exception as e:
-                self.get_logger().info(str(e))
+                self.get_logger().info("Issue publishing to odom" + str(e))
 
             # sleep
             time.sleep(1.0/rate)
@@ -339,14 +343,21 @@ class Roboclaw_node(Node):
         vel_right = linear_x + twist.angular.z * self.BASE_WIDTH / 2.0  # m/s
         vel_left = linear_x - twist.angular.z * self.BASE_WIDTH / 2.0
 
+        if self.INVERT_MOTOR_DIRECTION:
+            vel_right = -vel_right
+            vel_left = -vel_left
+
+        if self.FLIP_LEFT_AND_RIGHT_MOTORS:
+            vel_left, vel_right = vel_right, vel_left
+
         left_ticks = int(vel_left * self.TICKS_PER_METER)
         right_ticks = int(vel_right * self.TICKS_PER_METER)  # ticks/s
 
         if left_ticks == 0 and right_ticks == 0:
-            self.roboclaw.ForwardM1(self.address, 0)
-            self.roboclaw.ForwardM2(self.address, 0)
+            self.roboclaw.ForwardM1(self.ADDRESS, 0)
+            self.roboclaw.ForwardM2(self.ADDRESS, 0)
         else:
-            self.roboclaw.SpeedM1M2(self.address, left_ticks, right_ticks)
+            self.roboclaw.SpeedM1M2(self.ADDRESS, left_ticks, right_ticks)
 
     def shutdown(self):
         """
@@ -354,13 +365,13 @@ class Roboclaw_node(Node):
         """
         self.get_logger().info('Shutting down')
         try:
-            self.roboclaw.ForwardM1(self.address, 0)
-            self.roboclaw.ForwardM2(self.address, 0)
+            self.roboclaw.ForwardM1(self.ADDRESS, 0)
+            self.roboclaw.ForwardM2(self.ADDRESS, 0)
         except OSError:
             self.get_logger().error("Shutdown did not work trying again")
             try:
-                self.roboclaw.ForwardM1(self.address, 0)
-                self.roboclaw.ForwardM2(self.address, 0)
+                self.roboclaw.ForwardM1(self.ADDRESS, 0)
+                self.roboclaw.ForwardM2(self.ADDRESS, 0)
             except OSError as e:
                 self.get_logger().error("Could not shutdown motors!!!!")
                 self.get_logger().info(e)
@@ -370,7 +381,7 @@ class Roboclaw_node(Node):
         Diagnostics stuff that needs more understanding.
         """
         try:
-            status = self.roboclaw.ReadError(self.address)[1]
+            status = self.roboclaw.ReadError(self.ADDRESS)[1]
         except OSError as e:
             self.get_logger().warn("Diagnostics OSError: %d", e.errno)
             self.get_logger().info(e)  # rclpy.logdebug(e)
@@ -378,10 +389,10 @@ class Roboclaw_node(Node):
         state, message = self.ERRORS[status]
         stat.summary(state, message)
         try:
-            stat.add("Main Batt V:", str((self.roboclaw.ReadMainBatteryVoltage(self.address)[1] / 10)))
-            stat.add("Logic Batt V:", str(float(self.roboclaw.ReadLogicBatteryVoltage(self.address)[1] / 10)))
-            stat.add("Temp1 C:", str(float(self.roboclaw.ReadTemp(self.address)[1] / 10)))
-            stat.add("Temp2 C:", str(float(self.roboclaw.ReadTemp2(self.address)[1] / 10)))
+            stat.add("Main Batt V:", str((self.roboclaw.ReadMainBatteryVoltage(self.ADDRESS)[1] / 10)))
+            stat.add("Logic Batt V:", str(float(self.roboclaw.ReadLogicBatteryVoltage(self.ADDRESS)[1] / 10)))
+            stat.add("Temp1 C:", str(float(self.roboclaw.ReadTemp(self.ADDRESS)[1] / 10)))
+            stat.add("Temp2 C:", str(float(self.roboclaw.ReadTemp2(self.ADDRESS)[1] / 10)))
         except OSError as e:
             self.get_logger().warn("Diagnostics OSError: %d", e.errno)
             self.get_logger().info(e)
