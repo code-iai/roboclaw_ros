@@ -1,13 +1,14 @@
 #!/usr/bin/env python
 
 from math import pi, cos, sin
+import numpy as np
 import diagnostic_msgs
 import diagnostic_updater
 
 from roboclaw_driver.roboclaw_driver import Roboclaw
 import rclpy
 from tf2_ros.transform_broadcaster import TransformBroadcaster
-from geometry_msgs.msg import Quaternion, Twist, TransformStamped
+from geometry_msgs.msg import Vector3, Quaternion, Twist, TransformStamped
 from nav_msgs.msg import Odometry
 
 from rclpy.node import Node
@@ -22,7 +23,7 @@ from rclpy.time import Duration
 __author__ = "bwbazemore@uga.edu (Brad Bazemore)"
 
 
-class EncoderOdom:
+class OdomEncoder:
     def __init__(self, ticks_per_meter, base_width, _node):
         self.TICKS_PER_METER = ticks_per_meter
         self.BASE_WIDTH = base_width
@@ -36,7 +37,37 @@ class EncoderOdom:
         self.last_enc_time = self.node.get_clock().now()
 
     @staticmethod
+    def quaternion_from_euler(roll, pitch, yaw):
+        """
+        Calculate quaternion from euler angles.
+        """
+        roll /= 2.0
+        pitch /= 2.0
+        yaw /= 2.0
+        cos_roll = cos(roll)
+        sin_roll = sin(roll)
+        cos_pitch = cos(pitch)
+        sin_pitch = sin(pitch)
+        cos_yaw = cos(yaw)
+        sin_yaw = sin(yaw)
+        cos_roll_x_cos_yaw = cos_roll * cos_yaw
+        cos_roll_x_sin_yaw = cos_roll * sin_yaw
+        sin_roll_x_cos_yaw = sin_roll * cos_yaw
+        sin_roll_x_sin_yaw = sin_roll * sin_yaw
+
+        q = np.empty((4,))
+        q[0] = cos_pitch * sin_roll_x_cos_yaw - sin_pitch * cos_roll_x_sin_yaw
+        q[1] = cos_pitch * sin_roll_x_sin_yaw + sin_pitch * cos_roll_x_cos_yaw
+        q[2] = cos_pitch * cos_roll_x_sin_yaw - sin_pitch * sin_roll_x_cos_yaw
+        q[3] = cos_pitch * cos_roll_x_cos_yaw + sin_pitch * sin_roll_x_sin_yaw
+
+        return q
+
+    @staticmethod
     def normalize_angle(angle):
+        """
+        Normalize angle to be in the range of -pi to pi.
+        """
         while angle > pi:
             angle -= 2.0 * pi
         while angle < -pi:
@@ -44,6 +75,10 @@ class EncoderOdom:
         return angle
 
     def update(self, enc_left, enc_right):
+        """
+        Calculate current linear and angular velocity from encoder ticks.
+        """
+        self.node.get_logger().info("enc_left: %d, enc_right: %d" % (enc_left, enc_right))
         left_ticks = enc_left - self.last_enc_left
         right_ticks = enc_right - self.last_enc_right
         self.last_enc_left = enc_left
@@ -56,8 +91,8 @@ class EncoderOdom:
         d_time = (current_time.nanoseconds - self.last_enc_time.nanoseconds) / 1000000000
         self.last_enc_time = current_time
 
-        # TODO find better what to determine going straight, this means slight deviation is accounted
-        if left_ticks == right_ticks:
+        encoder_deviation_threshold = 10
+        if abs(left_ticks - right_ticks) < encoder_deviation_threshold:
             d_theta = 0.0
             self.cur_x += dist * cos(self.cur_theta)
             self.cur_y += dist * sin(self.cur_theta)
@@ -78,32 +113,39 @@ class EncoderOdom:
         return vel_x, vel_theta
 
     def update_publish(self, enc_left, enc_right):
+        """
+        Update odometry and publish. Ignore encoder jumps.
+        """
         # 2106 per 0.1 seconds is max speed, error in the 16th bit is 32768
-        # TODO lets find a better way to deal with this error
         if abs(enc_left - self.last_enc_left) > 20000:
-            rclpy.logerr("Ignoring left encoder jump: cur %d, last %d" % (enc_left, self.last_enc_left))
+            self.node.get_logger().info("Ignoring left encoder jump: cur %d, last %d" % (enc_left, self.last_enc_left))
         elif abs(enc_right - self.last_enc_right) > 20000:
-            rclpy.logerr("Ignoring right encoder jump: cur %d, last %d" % (enc_right, self.last_enc_right))
+            self.node.get_logger().info("Ignoring right encoder jump: cur %d, last %d" % (enc_right, self.last_enc_right))
         else:
             vel_x, vel_theta = self.update(enc_left, enc_right)
             self.publish_odom(self.cur_x, self.cur_y, self.cur_theta, vel_x, vel_theta)
 
     def publish_odom(self, cur_x, cur_y, cur_theta, vx, vth):
-        quat = transforms3d.euler.euler2quat(0, 0, cur_theta)
+        """
+        Publish odometry and base_footprint message.
+        """
+        broadcaster = TransformBroadcaster(self.node)
+
         current_time = self.node.get_clock().now()
-        br = TransformBroadcaster(self.node)
+        z_rot_quat = self.quaternion_from_euler(0, 0, yaw=cur_theta)
 
-        tfs = TransformStamped()
-        tfs.header.stamp = current_time.to_msg()
-        tfs.header.frame_id = "odom"
-        tfs._child_frame_id = "base_footprint"
+        base_footprint_transform = TransformStamped()
+        base_footprint_transform.header.stamp = current_time.to_msg()
+        base_footprint_transform.header.frame_id = "odom"
+        base_footprint_transform._child_frame_id = "base_footprint"
 
-        tfs.transform.rotation.x = quat[0]
-        tfs.transform.rotation.y = quat[1]
-        tfs.transform.rotation.z = quat[2]
-        tfs.transform.rotation.w = quat[3]
+        base_footprint_transform.transform.translation = Vector3(x=cur_x, y=cur_y, z=0.0)
+        base_footprint_transform.transform.rotation = Quaternion(x=z_rot_quat[0],
+                                                                 y=z_rot_quat[1],
+                                                                 z=z_rot_quat[2],
+                                                                 w=z_rot_quat[3])
 
-        br.sendTransform(tfs)
+        broadcaster.sendTransform(base_footprint_transform)
 
         odom = Odometry()
         odom.header.stamp = current_time.to_msg()
@@ -111,7 +153,10 @@ class EncoderOdom:
         odom.pose.pose.position.x = cur_x
         odom.pose.pose.position.y = cur_y
         odom.pose.pose.position.z = 0.0
-        odom.pose.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+        odom.pose.pose.orientation = Quaternion(x=z_rot_quat[0],
+                                                y=z_rot_quat[1],
+                                                z=z_rot_quat[2],
+                                                w=z_rot_quat[3])
 
         odom.pose.covariance[0] = 0.01
         odom.pose.covariance[7] = 0.01
@@ -179,8 +224,7 @@ class Roboclaw_node(Node):
             self.get_logger().warn("Roboclaw: Problem getting version with status {} version {}. Continue."
                                    .format(status, version))
 
-        # Setup diagnostics
-        # TODO: how to use diagnostics here?
+        # Set up diagnostics
         self.updater = diagnostic_updater.Updater(self)
         self.updater.setHardwareID("Roboclaw")
         self.updater.add(diagnostic_updater.
@@ -208,7 +252,7 @@ class Roboclaw_node(Node):
         self.subscription = self.create_subscription(Twist, "base/cmd_vel", self.cmd_vel_callback, 10)
 
         # Set up odometry encoder
-        self.odom_encoder = EncoderOdom(self.TICKS_PER_METER, self.BASE_WIDTH, self)
+        self.odom_encoder = OdomEncoder(self.TICKS_PER_METER, self.BASE_WIDTH, self)
 
         # Publish defaults
         self.get_logger().info("dev %s" % dev_name)
@@ -219,7 +263,6 @@ class Roboclaw_node(Node):
         self.get_logger().info("base_width %f" % self.BASE_WIDTH)
         self.get_logger().info("invert_motor_direction %f" % self.INVERT_MOTOR_DIRECTION)
         self.get_logger().info("flip_left_and_right_motors %f" % self.FLIP_LEFT_AND_RIGHT_MOTORS)
-
 
     def run(self):
         """
@@ -284,7 +327,7 @@ class Roboclaw_node(Node):
 
     def cmd_vel_callback(self, twist):
         """
-            Callback for velocity commands.
+            Callback for velocity commands. Send commands to roboclaw.
         """
         self.last_set_speed_time = self.get_clock().now()
         linear_x = twist.linear.x
@@ -307,7 +350,7 @@ class Roboclaw_node(Node):
 
     def shutdown(self):
         """
-        Stop motors and shut down
+        Stop motors and shut down.
         """
         self.get_logger().info('Shutting down')
         try:
@@ -323,6 +366,9 @@ class Roboclaw_node(Node):
                 self.get_logger().info(e)
 
     def check_vitals(self, stat):
+        """
+        Diagnostics stuff that needs more understanding.
+        """
         try:
             status = self.roboclaw.ReadError(self.address)[1]
         except OSError as e:
