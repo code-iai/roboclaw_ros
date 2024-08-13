@@ -28,14 +28,14 @@ be manually set for the motor before starting. Autotune functions usually return
 values but in most cases you will still need to manually adjust them for optimum performance.
 
 ## Usage
-Just clone the repo into your catkin workspace. It contains the ROS package and the motor controller driver.  Remmeber to make sure ROS has permisions to use the dev port you give it.
+Just clone the repo into your catkin workspace. It contains the ROS package and the motor controller driver.  Remember to make sure ROS has permisions to use the dev port you give it.
 ```bash
 cd <workspace>/src
 git clone https://github.com/sonyccd/roboclaw_ros.git
 cd <workspace>
-catkin_make
-source devel/setup.bash
-roslaunch roboclaw_node roboclaw.launch
+colcon build
+source install/setup.bash
+ros2 launch roboclaw_node roboclaw_launch.py
 ```
 
 ## Parameters
@@ -44,11 +44,11 @@ The launch file can be configure at the command line with arguments, by changing
 |Parameter|Default|Definition|
 |-----|----------|-------|
 |dev|/dev/ttyACM0|Dev that is the Roboclaw|
-|baud|115200|Baud rate the Roboclaw is configured for|
+|baud|38400|Baud rate the Roboclaw is configured for|
 |address|128|The address the Roboclaw is set to, 128 is 0x80|
-|max_speed|2.0|Max speed allowed for motors in meters per second|
-|ticks_per_meter|4342.2|The number of encoder ticks per meter of movement|
-|base_width|0.315|Width from one wheel edge to another in meters|
+|max_speed|1.0|Max speed allowed for motors in meters per second|
+|ticks_per_meter|2495.0|The number of encoder ticks per meter of movement|
+|base_width|0.421|Width from one wheel edge to another in meters|
 
 ## Topics
 ###Subscribed
@@ -58,5 +58,5 @@ Velocity commands for the mobile base.
 /odom [(nav_msgs/Odometry)](http://docs.ros.org/api/nav_msgs/html/msg/Odometry.html)  
 Odometry output from the mobile base.
 
-#IF SOMETHING IS BROEKN:
+#IF SOMETHING IS BROKEN:
 Please file an issue, it makes it far easier to keep track of what needs to be fixed. It also allows others that might have solved the problem to contribute.  If you are confused feel free to email me, I might have overlooked something in my readme.
