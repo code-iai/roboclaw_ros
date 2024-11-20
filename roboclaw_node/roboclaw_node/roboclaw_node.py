@@ -35,6 +35,7 @@ class OdomEncoder:
         self.last_enc_left = 0  # M1=left
         self.last_enc_right = 0  # M2=right
         self.last_enc_time = self.node.get_clock().now()
+        self.broadcaster = TransformBroadcaster(self.node)
 
     @staticmethod
     def quaternion_from_euler(roll, pitch, yaw):
@@ -128,7 +129,7 @@ class OdomEncoder:
         """
         Publish odometry and base_footprint message.
         """
-        broadcaster = TransformBroadcaster(self.node)
+        #broadcaster = TransformBroadcaster(self.node)
 
         current_time = self.node.get_clock().now()
         z_rot_quat = self.quaternion_from_euler(0, 0, yaw=cur_theta)
@@ -144,7 +145,7 @@ class OdomEncoder:
                                                                  z=z_rot_quat[2],
                                                                  w=z_rot_quat[3])
 
-        broadcaster.sendTransform(base_footprint_transform)
+        self.broadcaster.sendTransform(base_footprint_transform)
 
         odom = Odometry()
         odom.header.stamp = current_time.to_msg()
